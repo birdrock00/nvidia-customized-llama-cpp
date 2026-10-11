@@ -1,0 +1,17 @@
+build/
+build-*/
+cmake-build-*/
+out/
+models/
+logs/
+profiles/
+eval/runs/
+eval/server-logs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+*.ninfer
+*.gguf
+*.safetensors
