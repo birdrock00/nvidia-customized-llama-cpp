@@ -98,7 +98,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ inputs.push_image != false }}
+          # On non-dispatch events inputs.push_image is null, and GitHub casts null to false,
+          # so `inputs.push_image != false` silently means "do not push". Be explicit: the
+          # checkbox only applies to manual runs, everything else always pushes.
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push_image == true }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
