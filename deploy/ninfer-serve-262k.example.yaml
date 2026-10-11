@@ -1,0 +1,123 @@
+# Minimal, cluster-agnostic example of the 262K profile.
+#
+# Copy this and add whatever your cluster needs for scheduling (node selector, tolerations,
+# runtime class) and for storage. Nothing here is specific to a particular network.
+#
+# Two things that are easy to get wrong:
+#   * The NVIDIA runtime class is required. Without it /dev/nvidia* is not in the container and
+#     the server exits during device init.
+#   * nvidia.com/gpu: 1 reserves the whole device but does NOT partition its memory. Any other
+#     pod sharing the node and asking for a GPU races this one for the same 24 GiB. The 262K
+#     profile leaves about 1.4 GiB of slack, so it must be the only VRAM consumer on the card.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ninfer-serve
+  labels:
+    app: ninfer-serve
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ninfer-serve
+  template:
+    metadata:
+      labels:
+        app: ninfer-serve
+    spec:
+      runtimeClassName: nvidia
+      containers:
+        - name: ninfer
+          image: ghcr.io/OWNER/nvidia-customized-llama-cpp:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - ninfer-serve
+          args:
+            - /models/qwen3_8_27b.ninfer
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+            # Full native context. Only rk4v4-e8 fits this on 24 GiB.
+            - --max-context
+            - "262144"
+            - --kv-capacity
+            - "262144"
+            - --kv-dtype
+            - rk4v4-e8
+            - --prefill-chunk
+            - "1024"
+            # One generation lane keeps the VRAM budget honest; a second lane costs about
+            # 390 MiB and is only worth it once you have measured the slack yourself.
+            - --max-concurrency
+            - "1"
+            - --max-pending-requests
+            - "16"
+            # A cold 256K prefill runs longer than the 30 s admission default, which would
+            # otherwise surface to the client as an in-band SSE error event.
+            - --pending-timeout-ms
+            - "600000"
+            - --spec
+            - mtp
+            - --draft-tokens
+            - "3"
+            - --lm-head-draft
+            - --preserve-thinking
+            # Keep whatever name existing clients already ask for.
+            - --model-id
+            - qwen3.8-27b
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: "4"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 8
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: models
+          hostPath:
+            path: /srv/llm-models
+            type: Directory
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ninfer-serve
+spec:
+  selector:
+    app: ninfer-serve
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
