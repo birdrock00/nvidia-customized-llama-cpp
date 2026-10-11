@@ -7,6 +7,8 @@ on:
   schedule:
     # 08:30 UTC daily. A daily build does not pull upstream; see FORK.md.
     - cron: '30 8 * * *'
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       push_image:
