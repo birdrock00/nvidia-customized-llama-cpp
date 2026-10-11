@@ -49,13 +49,22 @@ jobs:
 
       # nvcc peak RSS on this tree can exceed the runner's 16 GiB of RAM when several
       # translation units land at once; without swap the OOM killer takes the compiler down
-      # with no useful error text.
-      - name: Add 16 GiB swap
+      # with no useful error text. The runner image ships its own active /swapfile, which
+      # cannot be truncated (ETXTBSY), so add a separate one and only when the total is low.
+      - name: Ensure at least 16 GiB of swap
         run: |
-          sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384 status=none
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          free -h
+          have=$(swapon --show=SIZE --noheadings --bytes | awk '{s+=$1} END {print s+0}')
+          echo "swap already available: ${have} bytes"
+          if [ "$have" -lt 16000000000 ]; then
+            sudo fallocate -l 16G /ninfer-swap \
+              || sudo dd if=/dev/zero of=/ninfer-swap bs=1M count=16384 status=none
+            sudo chmod 600 /ninfer-swap
+            sudo mkswap /ninfer-swap
+            sudo swapon /ninfer-swap || echo "::warning::could not enable /ninfer-swap; build may OOM"
+          else
+            echo "no extra swap needed"
+          fi
           free -h
 
       - name: Set up Docker Buildx
